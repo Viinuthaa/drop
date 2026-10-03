@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect, useRef, useState } from "react"
+import FileDropzone from "../components/FileDropzone"
 
 const SIGNALING_URL = "ws://localhost:4000"
 
@@ -197,6 +198,8 @@ export default function Home() {
     )
   }
 
+  const connected = status === "Connected directly"
+
   return (
     <main className="page">
       <nav className="navbar">
@@ -272,6 +275,8 @@ export default function Home() {
             </div>
           )}
 
+          {connected && <FileDropzone />}
+
           <p className="panel-note">
             {status || "No account required · Browser-to-browser transfer"}
           </p>
@@ -279,7 +284,7 @@ export default function Home() {
       </section>
 
       <footer>
-        <span>DROP / 05</span>
+        <span>DROP / 06</span>
         <span>NO SERVER STORAGE</span>
       </footer>
     </main>
