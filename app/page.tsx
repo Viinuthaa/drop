@@ -2,8 +2,22 @@
 
 import { useState } from "react"
 
+function generateRoomCode() {
+  const characters = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+
+  return Array.from(
+    { length: 6 },
+    () => characters[Math.floor(Math.random() * characters.length)]
+  ).join("")
+}
+
 export default function Home() {
   const [mode, setMode] = useState<"create" | "join">("create")
+  const [roomCode, setRoomCode] = useState("")
+
+  function createRoom() {
+    setRoomCode(generateRoomCode())
+  }
 
   return (
     <main className="page">
@@ -46,10 +60,21 @@ export default function Home() {
           </div>
 
           {mode === "create" ? (
-            <button className="primary-button">
-              Create a room
-              <span>→</span>
-            </button>
+            roomCode ? (
+              <div className="room-created">
+                <p className="room-label">YOUR ROOM CODE</p>
+                <strong>{roomCode}</strong>
+                <p>Share this code with the other device.</p>
+              </div>
+            ) : (
+              <button
+                className="primary-button"
+                onClick={createRoom}
+              >
+                Create a room
+                <span>→</span>
+              </button>
+            )
           ) : (
             <div className="join-form">
               <input placeholder="Room code" />
@@ -68,7 +93,7 @@ export default function Home() {
       </section>
 
       <footer>
-        <span>DROP / 01</span>
+        <span>DROP / 02</span>
         <span>NO SERVER STORAGE</span>
       </footer>
     </main>

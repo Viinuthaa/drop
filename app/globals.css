@@ -166,6 +166,31 @@ h1 {
   width: 170px;
 }
 
+.room-created {
+  padding: 28px;
+  text-align: left;
+}
+
+.room-label {
+  margin: 0 0 10px;
+  color: #9b6177;
+  font-size: 9px;
+  letter-spacing: 1.5px;
+}
+
+.room-created strong {
+  display: block;
+  color: #e5e0e5;
+  font-size: 38px;
+  letter-spacing: 6px;
+}
+
+.room-created p:last-child {
+  margin: 14px 0 0;
+  color: #918995;
+  font-size: 12px;
+}
+
 .panel-note {
   margin: 0;
   padding: 13px;

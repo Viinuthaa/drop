@@ -2,8 +2,8 @@ import type { Metadata } from "next"
 import "./globals.css"
 
 export const metadata: Metadata = {
-  title: "drop.",
-  description: "Private peer-to-peer file transfer.",
+  title: "drop",
+  description: "A peer-to-peer file transfer tool.",
 }
 
 export default function RootLayout({
