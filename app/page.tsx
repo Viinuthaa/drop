@@ -14,9 +14,47 @@ function generateRoomCode() {
 export default function Home() {
   const [mode, setMode] = useState<"create" | "join">("create")
   const [roomCode, setRoomCode] = useState("")
+  const [joinCode, setJoinCode] = useState("")
+  const [joined, setJoined] = useState(false)
 
   function createRoom() {
     setRoomCode(generateRoomCode())
+  }
+
+  function joinRoom() {
+    const code = joinCode.trim().toUpperCase()
+
+    if (code.length === 6) {
+      setRoomCode(code)
+      setJoined(true)
+    }
+  }
+
+  if (joined) {
+    return (
+      <main className="room-page">
+        <div className="room-header">
+          <div className="brand">drop</div>
+          <span>ROOM {roomCode}</span>
+        </div>
+
+        <section className="room-content">
+          <p className="eyebrow">ROOM READY</p>
+
+          <h1>Waiting for a connection.</h1>
+
+          <div className="room-code">
+            <span>ROOM CODE</span>
+            <strong>{roomCode}</strong>
+          </div>
+
+          <p>
+            Share this code with the other device to start
+            transferring files.
+          </p>
+        </section>
+      </main>
+    )
   }
 
   return (
@@ -77,9 +115,20 @@ export default function Home() {
             )
           ) : (
             <div className="join-form">
-              <input placeholder="Room code" />
+              <input
+                value={joinCode}
+                onChange={event =>
+                  setJoinCode(event.target.value.toUpperCase())
+                }
+                maxLength={6}
+                placeholder="Room code"
+              />
 
-              <button className="primary-button">
+              <button
+                className="primary-button"
+                onClick={joinRoom}
+                disabled={joinCode.length !== 6}
+              >
                 Join room
                 <span>→</span>
               </button>
@@ -93,7 +142,7 @@ export default function Home() {
       </section>
 
       <footer>
-        <span>DROP / 02</span>
+        <span>DROP / 03</span>
         <span>NO SERVER STORAGE</span>
       </footer>
     </main>

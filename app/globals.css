@@ -23,14 +23,16 @@ button {
   cursor: pointer;
 }
 
-.page {
+.page,
+.room-page {
   min-height: 100vh;
   display: flex;
   flex-direction: column;
   padding: 26px 42px;
 }
 
-.navbar {
+.navbar,
+.room-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -134,8 +136,13 @@ h1 {
   font-weight: 600;
 }
 
-.primary-button:hover {
+.primary-button:hover:not(:disabled) {
   background: #9b6177;
+}
+
+.primary-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
 }
 
 .primary-button span {
@@ -156,6 +163,7 @@ h1 {
   outline: none;
   background: #121016;
   color: #e5e0e5;
+  text-transform: uppercase;
 }
 
 .join-form input::placeholder {
@@ -171,7 +179,8 @@ h1 {
   text-align: left;
 }
 
-.room-label {
+.room-label,
+.room-code span {
   margin: 0 0 10px;
   color: #9b6177;
   font-size: 9px;
@@ -199,6 +208,37 @@ h1 {
   letter-spacing: 0.3px;
 }
 
+.room-content {
+  width: min(700px, 100%);
+  margin: auto;
+  text-align: center;
+}
+
+.room-content h1 {
+  margin-bottom: 40px;
+}
+
+.room-content > p:last-child {
+  color: #918995;
+  font-size: 14px;
+}
+
+.room-code {
+  padding: 30px;
+  border: 1px solid #332b36;
+  background: #1a171f;
+}
+
+.room-code span {
+  display: block;
+}
+
+.room-code strong {
+  display: block;
+  font-size: 48px;
+  letter-spacing: 8px;
+}
+
 footer {
   display: flex;
   justify-content: space-between;
@@ -208,7 +248,8 @@ footer {
 }
 
 @media (max-width: 600px) {
-  .page {
+  .page,
+  .room-page {
     padding: 22px;
   }
 
@@ -231,6 +272,11 @@ footer {
 
   .join-form .primary-button {
     width: 100%;
+  }
+
+  .room-code strong {
+    font-size: 34px;
+    letter-spacing: 5px;
   }
 
   footer {
