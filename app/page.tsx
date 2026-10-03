@@ -16,6 +16,7 @@ export default function Home() {
   const [roomCode, setRoomCode] = useState("")
   const [joinCode, setJoinCode] = useState("")
   const [status, setStatus] = useState("")
+  const [dataChannel, setDataChannel] = useState<RTCDataChannel | null>(null)
 
   const socketRef = useRef<WebSocket | null>(null)
   const peerRef = useRef<RTCPeerConnection | null>(null)
@@ -86,6 +87,7 @@ export default function Home() {
 
       if (message.type === "peer-left") {
         setStatus("Other device disconnected")
+        setDataChannel(null)
         peerRef.current?.close()
         peerRef.current = null
       }
@@ -139,6 +141,7 @@ export default function Home() {
         peer.connectionState === "disconnected"
       ) {
         setStatus("Connection interrupted")
+        setDataChannel(null)
       }
     }
 
@@ -146,15 +149,25 @@ export default function Home() {
       const channel = event.channel
 
       channel.onopen = () => {
+        setDataChannel(channel)
         setStatus("Connected directly")
+      }
+
+      channel.onclose = () => {
+        setDataChannel(null)
       }
     }
 
     if (offerer) {
-      const channel = peer.createDataChannel("connection")
+      const channel = peer.createDataChannel("files")
 
       channel.onopen = () => {
+        setDataChannel(channel)
         setStatus("Connected directly")
+      }
+
+      channel.onclose = () => {
+        setDataChannel(null)
       }
 
       const offer = await peer.createOffer()
@@ -275,7 +288,7 @@ export default function Home() {
             </div>
           )}
 
-          {connected && <FileDropzone />}
+          {connected && <FileDropzone dataChannel={dataChannel} />}
 
           <p className="panel-note">
             {status || "No account required · Browser-to-browser transfer"}
@@ -284,7 +297,7 @@ export default function Home() {
       </section>
 
       <footer>
-        <span>DROP / 06</span>
+        <span>DROP / 07</span>
         <span>NO SERVER STORAGE</span>
       </footer>
     </main>

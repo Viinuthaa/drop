@@ -1,28 +1,214 @@
 "use client"
 
-import { useRef, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 
 type Props = {
-  onFiles: (files: File[]) => void
+  dataChannel: RTCDataChannel | null
 }
 
-export default function FileDropzone({ onFiles }: Props) {
+type IncomingFile = {
+  id: string
+  name: string
+  size: number
+  type: string
+  chunks: ArrayBuffer[]
+}
+
+type ReceivedFile = {
+  name: string
+  size: number
+  url: string
+}
+
+const CHUNK_SIZE = 64 * 1024
+const MAX_BUFFERED_AMOUNT = 1024 * 1024
+
+export default function FileDropzone({ dataChannel }: Props) {
   const inputRef = useRef<HTMLInputElement>(null)
+  const incomingFile = useRef<IncomingFile | null>(null)
+
   const [files, setFiles] = useState<File[]>([])
+  const [receivedFiles, setReceivedFiles] = useState<ReceivedFile[]>([])
   const [dragging, setDragging] = useState(false)
+  const [sending, setSending] = useState(false)
+  const [message, setMessage] = useState("")
+
+  useEffect(() => {
+    if (!dataChannel) return
+
+    function handleMessage(event: MessageEvent) {
+      if (typeof event.data === "string") {
+        try {
+          const data = JSON.parse(event.data)
+
+          if (data.type === "file-start") {
+            incomingFile.current = {
+              id: data.id,
+              name: data.name,
+              size: data.size,
+              type: data.fileType || "application/octet-stream",
+              chunks: [],
+            }
+          }
+
+          if (data.type === "file-end") {
+            const file = incomingFile.current
+
+            if (!file || file.id !== data.id) return
+
+            const blob = new Blob(file.chunks, {
+              type: file.type,
+            })
+
+            const url = URL.createObjectURL(blob)
+
+            setReceivedFiles(current => [
+              ...current,
+              {
+                name: file.name,
+                size: file.size,
+                url,
+              },
+            ])
+
+            incomingFile.current = null
+          }
+        } catch {
+          return
+        }
+
+        return
+      }
+
+      const file = incomingFile.current
+
+      if (!file) return
+
+      if (event.data instanceof ArrayBuffer) {
+        file.chunks.push(event.data)
+        return
+      }
+
+      if (event.data instanceof Blob) {
+        event.data.arrayBuffer().then(buffer => {
+          incomingFile.current?.chunks.push(buffer)
+        })
+      }
+    }
+
+    dataChannel.addEventListener("message", handleMessage)
+
+    return () => {
+      dataChannel.removeEventListener("message", handleMessage)
+    }
+  }, [dataChannel])
+
+  useEffect(() => {
+    return () => {
+      receivedFiles.forEach(file => {
+        URL.revokeObjectURL(file.url)
+      })
+    }
+  }, [receivedFiles])
 
   function addFiles(selected: FileList | null) {
     if (!selected) return
 
-    const next = [...files, ...Array.from(selected)]
-    setFiles(next)
-    onFiles(next)
+    setFiles(current => [...current, ...Array.from(selected)])
   }
 
   function removeFile(index: number) {
-    const next = files.filter((_, i) => i !== index)
-    setFiles(next)
-    onFiles(next)
+    setFiles(current => current.filter((_, i) => i !== index))
+  }
+
+  function waitForBuffer() {
+    if (!dataChannel) {
+      return Promise.resolve()
+    }
+
+    if (dataChannel.bufferedAmount <= MAX_BUFFERED_AMOUNT) {
+      return Promise.resolve()
+    }
+
+    return new Promise<void>(resolve => {
+      const handleLow = () => {
+        dataChannel.removeEventListener(
+          "bufferedamountlow",
+          handleLow
+        )
+        resolve()
+      }
+
+      dataChannel.bufferedAmountLowThreshold = MAX_BUFFERED_AMOUNT
+      dataChannel.addEventListener(
+        "bufferedamountlow",
+        handleLow
+      )
+    })
+  }
+
+  async function sendFile(file: File) {
+    if (!dataChannel || dataChannel.readyState !== "open") {
+      throw new Error("Data channel is not connected")
+    }
+
+    const id = crypto.randomUUID()
+
+    dataChannel.send(
+      JSON.stringify({
+        type: "file-start",
+        id,
+        name: file.name,
+        size: file.size,
+        fileType: file.type,
+      })
+    )
+
+    let offset = 0
+
+    while (offset < file.size) {
+      await waitForBuffer()
+
+      const chunk = await file
+        .slice(offset, offset + CHUNK_SIZE)
+        .arrayBuffer()
+
+      dataChannel.send(chunk)
+
+      offset += chunk.byteLength
+    }
+
+    dataChannel.send(
+      JSON.stringify({
+        type: "file-end",
+        id,
+      })
+    )
+  }
+
+  async function sendFiles() {
+    if (
+      !dataChannel ||
+      dataChannel.readyState !== "open" ||
+      files.length === 0
+    ) {
+      return
+    }
+
+    setSending(true)
+    setMessage("Sending files...")
+
+    try {
+      for (const file of files) {
+        await sendFile(file)
+      }
+
+      setMessage("Files sent successfully")
+    } catch {
+      setMessage("File transfer failed")
+    } finally {
+      setSending(false)
+    }
   }
 
   function formatSize(bytes: number) {
@@ -81,6 +267,41 @@ export default function FileDropzone({ onFiles }: Props) {
               >
                 ×
               </button>
+            </div>
+          ))}
+
+          <button
+            className="primary-button"
+            onClick={event => {
+              event.stopPropagation()
+              sendFiles()
+            }}
+            disabled={
+              sending ||
+              !dataChannel ||
+              dataChannel.readyState !== "open"
+            }
+          >
+            {sending ? "Sending..." : "Send files"}
+            <span>→</span>
+          </button>
+        </div>
+      )}
+
+      {message && <p className="panel-note">{message}</p>}
+
+      {receivedFiles.length > 0 && (
+        <div className="file-list">
+          {receivedFiles.map((file, index) => (
+            <div className="file-item" key={`${file.name}-${index}`}>
+              <div>
+                <strong>{file.name}</strong>
+                <span>{formatSize(file.size)}</span>
+              </div>
+
+              <a href={file.url} download={file.name}>
+                Download
+              </a>
             </div>
           ))}
         </div>
