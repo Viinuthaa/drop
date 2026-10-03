@@ -1,16 +1,13 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 
 const SIGNALING_URL = "ws://localhost:4000"
 
-function generateRoomCode() {
-  const characters = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
-
-  return Array.from(
-    { length: 6 },
-    () => characters[Math.floor(Math.random() * characters.length)]
-  ).join("")
+type SignalMessage = {
+  type: string
+  roomCode?: string
+  data?: RTCSessionDescriptionInit | RTCIceCandidateInit
 }
 
 export default function Home() {
@@ -18,33 +15,78 @@ export default function Home() {
   const [roomCode, setRoomCode] = useState("")
   const [joinCode, setJoinCode] = useState("")
   const [status, setStatus] = useState("")
-  const [socket, setSocket] = useState<WebSocket | null>(null)
+
+  const socketRef = useRef<WebSocket | null>(null)
+  const peerRef = useRef<RTCPeerConnection | null>(null)
+  const pendingCandidates = useRef<RTCIceCandidateInit[]>([])
 
   useEffect(() => {
-    const connection = new WebSocket(SIGNALING_URL)
+    const socket = new WebSocket(SIGNALING_URL)
+    socketRef.current = socket
 
-    connection.onopen = () => setSocket(connection)
-    connection.onclose = () => setSocket(null)
-
-    connection.onmessage = event => {
-      const message = JSON.parse(event.data)
+    socket.onmessage = async event => {
+      const message: SignalMessage = JSON.parse(event.data)
 
       if (message.type === "room-created") {
-        setRoomCode(message.roomCode)
+        setRoomCode(message.roomCode || "")
         setStatus("Waiting for the other device")
       }
 
       if (message.type === "room-joined") {
         setRoomCode(joinCode)
-        setStatus("Connected to room")
+        setStatus("Joining room")
       }
 
       if (message.type === "peer-joined") {
-        setStatus("Other device connected")
+        setStatus("Connecting to other device")
+        await createPeer(true)
+      }
+
+      if (message.type === "offer" && message.data) {
+        await createPeer(false)
+
+        const peer = peerRef.current
+        if (!peer) return
+
+        await peer.setRemoteDescription(message.data)
+
+        for (const candidate of pendingCandidates.current) {
+          await peer.addIceCandidate(candidate)
+        }
+
+        pendingCandidates.current = []
+
+        const answer = await peer.createAnswer()
+        await peer.setLocalDescription(answer)
+
+        socket.send(
+          JSON.stringify({
+            type: "answer",
+            data: answer,
+          })
+        )
+      }
+
+      if (message.type === "answer" && message.data) {
+        await peerRef.current?.setRemoteDescription(message.data)
+      }
+
+      if (message.type === "ice-candidate" && message.data) {
+        const peer = peerRef.current
+
+        if (peer?.remoteDescription) {
+          await peer.addIceCandidate(message.data)
+        } else {
+          pendingCandidates.current.push(
+            message.data as RTCIceCandidateInit
+          )
+        }
       }
 
       if (message.type === "peer-left") {
         setStatus("Other device disconnected")
+        peerRef.current?.close()
+        peerRef.current = null
       }
 
       if (message.type === "room-unavailable") {
@@ -52,34 +94,107 @@ export default function Home() {
       }
     }
 
-    return () => connection.close()
+    socket.onerror = () => {
+      setStatus("Signaling server unavailable")
+    }
+
+    return () => {
+      socket.close()
+      peerRef.current?.close()
+    }
   }, [joinCode])
 
+  async function createPeer(offerer: boolean) {
+    if (peerRef.current) return
+
+    const peer = new RTCPeerConnection({
+      iceServers: [
+        {
+          urls: "stun:stun.l.google.com:19302",
+        },
+      ],
+    })
+
+    peerRef.current = peer
+
+    peer.onicecandidate = event => {
+      if (!event.candidate) return
+
+      socketRef.current?.send(
+        JSON.stringify({
+          type: "ice-candidate",
+          data: event.candidate.toJSON(),
+        })
+      )
+    }
+
+    peer.onconnectionstatechange = () => {
+      if (peer.connectionState === "connected") {
+        setStatus("Connected directly")
+      }
+
+      if (
+        peer.connectionState === "failed" ||
+        peer.connectionState === "disconnected"
+      ) {
+        setStatus("Connection interrupted")
+      }
+    }
+
+    peer.ondatachannel = event => {
+      const channel = event.channel
+
+      channel.onopen = () => {
+        setStatus("Connected directly")
+      }
+    }
+
+    if (offerer) {
+      const channel = peer.createDataChannel("connection")
+
+      channel.onopen = () => {
+        setStatus("Connected directly")
+      }
+
+      const offer = await peer.createOffer()
+      await peer.setLocalDescription(offer)
+
+      socketRef.current?.send(
+        JSON.stringify({
+          type: "offer",
+          data: offer,
+        })
+      )
+    }
+  }
+
   function createRoom() {
-    if (socket?.readyState === WebSocket.OPEN) {
-      socket.send(JSON.stringify({ type: "create" }))
+    if (socketRef.current?.readyState !== WebSocket.OPEN) {
+      setStatus("Signaling server unavailable")
       return
     }
 
-    setRoomCode(generateRoomCode())
-    setStatus("Start the signaling server to create a live room")
+    socketRef.current.send(
+      JSON.stringify({
+        type: "create",
+      })
+    )
   }
 
   function joinRoom() {
-    if (joinCode.length !== 6) return
-
-    if (socket?.readyState === WebSocket.OPEN) {
-      socket.send(
-        JSON.stringify({
-          type: "join",
-          roomCode: joinCode,
-        })
-      )
+    if (
+      joinCode.length !== 6 ||
+      socketRef.current?.readyState !== WebSocket.OPEN
+    ) {
       return
     }
 
-    setRoomCode(joinCode)
-    setStatus("Start the signaling server to join this room")
+    socketRef.current.send(
+      JSON.stringify({
+        type: "join",
+        roomCode: joinCode,
+      })
+    )
   }
 
   return (
@@ -158,13 +273,13 @@ export default function Home() {
           )}
 
           <p className="panel-note">
-            No account required · Browser-to-browser transfer
+            {status || "No account required · Browser-to-browser transfer"}
           </p>
         </div>
       </section>
 
       <footer>
-        <span>DROP / 04</span>
+        <span>DROP / 05</span>
         <span>NO SERVER STORAGE</span>
       </footer>
     </main>
