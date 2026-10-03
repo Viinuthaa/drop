@@ -1,6 +1,8 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
+
+const SIGNALING_URL = "ws://localhost:4000"
 
 function generateRoomCode() {
   const characters = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
@@ -15,46 +17,69 @@ export default function Home() {
   const [mode, setMode] = useState<"create" | "join">("create")
   const [roomCode, setRoomCode] = useState("")
   const [joinCode, setJoinCode] = useState("")
-  const [joined, setJoined] = useState(false)
+  const [status, setStatus] = useState("")
+  const [socket, setSocket] = useState<WebSocket | null>(null)
+
+  useEffect(() => {
+    const connection = new WebSocket(SIGNALING_URL)
+
+    connection.onopen = () => setSocket(connection)
+    connection.onclose = () => setSocket(null)
+
+    connection.onmessage = event => {
+      const message = JSON.parse(event.data)
+
+      if (message.type === "room-created") {
+        setRoomCode(message.roomCode)
+        setStatus("Waiting for the other device")
+      }
+
+      if (message.type === "room-joined") {
+        setRoomCode(joinCode)
+        setStatus("Connected to room")
+      }
+
+      if (message.type === "peer-joined") {
+        setStatus("Other device connected")
+      }
+
+      if (message.type === "peer-left") {
+        setStatus("Other device disconnected")
+      }
+
+      if (message.type === "room-unavailable") {
+        setStatus("Room unavailable")
+      }
+    }
+
+    return () => connection.close()
+  }, [joinCode])
 
   function createRoom() {
+    if (socket?.readyState === WebSocket.OPEN) {
+      socket.send(JSON.stringify({ type: "create" }))
+      return
+    }
+
     setRoomCode(generateRoomCode())
+    setStatus("Start the signaling server to create a live room")
   }
 
   function joinRoom() {
-    const code = joinCode.trim().toUpperCase()
+    if (joinCode.length !== 6) return
 
-    if (code.length === 6) {
-      setRoomCode(code)
-      setJoined(true)
+    if (socket?.readyState === WebSocket.OPEN) {
+      socket.send(
+        JSON.stringify({
+          type: "join",
+          roomCode: joinCode,
+        })
+      )
+      return
     }
-  }
 
-  if (joined) {
-    return (
-      <main className="room-page">
-        <div className="room-header">
-          <div className="brand">drop</div>
-          <span>ROOM {roomCode}</span>
-        </div>
-
-        <section className="room-content">
-          <p className="eyebrow">ROOM READY</p>
-
-          <h1>Waiting for a connection.</h1>
-
-          <div className="room-code">
-            <span>ROOM CODE</span>
-            <strong>{roomCode}</strong>
-          </div>
-
-          <p>
-            Share this code with the other device to start
-            transferring files.
-          </p>
-        </section>
-      </main>
-    )
+    setRoomCode(joinCode)
+    setStatus("Start the signaling server to join this room")
   }
 
   return (
@@ -100,15 +125,12 @@ export default function Home() {
           {mode === "create" ? (
             roomCode ? (
               <div className="room-created">
-                <p className="room-label">YOUR ROOM CODE</p>
+                <p className="room-label">ROOM CODE</p>
                 <strong>{roomCode}</strong>
-                <p>Share this code with the other device.</p>
+                <p>{status}</p>
               </div>
             ) : (
-              <button
-                className="primary-button"
-                onClick={createRoom}
-              >
+              <button className="primary-button" onClick={createRoom}>
                 Create a room
                 <span>→</span>
               </button>
@@ -142,7 +164,7 @@ export default function Home() {
       </section>
 
       <footer>
-        <span>DROP / 03</span>
+        <span>DROP / 04</span>
         <span>NO SERVER STORAGE</span>
       </footer>
     </main>
