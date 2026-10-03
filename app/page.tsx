@@ -16,7 +16,9 @@ export default function Home() {
   const [roomCode, setRoomCode] = useState("")
   const [joinCode, setJoinCode] = useState("")
   const [status, setStatus] = useState("")
-  const [dataChannel, setDataChannel] = useState<RTCDataChannel | null>(null)
+  const [dataChannel, setDataChannel] =
+    useState<RTCDataChannel | null>(null)
+  const [disconnected, setDisconnected] = useState(false)
 
   const socketRef = useRef<WebSocket | null>(null)
   const peerRef = useRef<RTCPeerConnection | null>(null)
@@ -32,15 +34,18 @@ export default function Home() {
       if (message.type === "room-created") {
         setRoomCode(message.roomCode || "")
         setStatus("Waiting for the other device")
+        setDisconnected(false)
       }
 
       if (message.type === "room-joined") {
         setRoomCode(joinCode)
         setStatus("Joining room")
+        setDisconnected(false)
       }
 
       if (message.type === "peer-joined") {
         setStatus("Connecting to other device")
+        setDisconnected(false)
         await createPeer(true)
       }
 
@@ -48,6 +53,7 @@ export default function Home() {
         await createPeer(false)
 
         const peer = peerRef.current
+
         if (!peer) return
 
         await peer.setRemoteDescription(message.data)
@@ -86,14 +92,16 @@ export default function Home() {
       }
 
       if (message.type === "peer-left") {
-        setStatus("Other device disconnected")
-        setDataChannel(null)
-        peerRef.current?.close()
-        peerRef.current = null
+        handleDisconnect("Other device disconnected")
       }
 
       if (message.type === "room-unavailable") {
         setStatus("Room unavailable")
+        setDisconnected(true)
+      }
+
+      if (message.type === "server-error") {
+        setStatus("Server error")
       }
     }
 
@@ -134,14 +142,15 @@ export default function Home() {
     peer.onconnectionstatechange = () => {
       if (peer.connectionState === "connected") {
         setStatus("Connected directly")
+        setDisconnected(false)
       }
 
       if (
         peer.connectionState === "failed" ||
-        peer.connectionState === "disconnected"
+        peer.connectionState === "disconnected" ||
+        peer.connectionState === "closed"
       ) {
-        setStatus("Connection interrupted")
-        setDataChannel(null)
+        handleDisconnect("Connection interrupted")
       }
     }
 
@@ -151,6 +160,7 @@ export default function Home() {
       channel.onopen = () => {
         setDataChannel(channel)
         setStatus("Connected directly")
+        setDisconnected(false)
       }
 
       channel.onclose = () => {
@@ -164,6 +174,7 @@ export default function Home() {
       channel.onopen = () => {
         setDataChannel(channel)
         setStatus("Connected directly")
+        setDisconnected(false)
       }
 
       channel.onclose = () => {
@@ -182,11 +193,24 @@ export default function Home() {
     }
   }
 
+  function handleDisconnect(message: string) {
+    setStatus(message)
+    setDisconnected(true)
+    setDataChannel(null)
+
+    peerRef.current?.close()
+    peerRef.current = null
+    pendingCandidates.current = []
+  }
+
   function createRoom() {
     if (socketRef.current?.readyState !== WebSocket.OPEN) {
       setStatus("Signaling server unavailable")
       return
     }
+
+    setRoomCode("")
+    setDisconnected(false)
 
     socketRef.current.send(
       JSON.stringify({
@@ -202,6 +226,8 @@ export default function Home() {
     ) {
       return
     }
+
+    setDisconnected(false)
 
     socketRef.current.send(
       JSON.stringify({
@@ -254,7 +280,7 @@ export default function Home() {
           </div>
 
           {mode === "create" ? (
-            roomCode ? (
+            roomCode && !disconnected ? (
               <div className="room-created">
                 <p className="room-label">ROOM CODE</p>
                 <strong>{roomCode}</strong>
@@ -290,14 +316,32 @@ export default function Home() {
 
           {connected && <FileDropzone dataChannel={dataChannel} />}
 
+          {disconnected && (
+            <div className="room-created">
+              <p className="room-label">DISCONNECTED</p>
+              <p>{status}</p>
+
+              {mode === "create" && (
+                <button
+                  className="primary-button"
+                  onClick={createRoom}
+                >
+                  Create new room
+                  <span>→</span>
+                </button>
+              )}
+            </div>
+          )}
+
           <p className="panel-note">
-            {status || "No account required · Browser-to-browser transfer"}
+            {status ||
+              "No account required · Browser-to-browser transfer"}
           </p>
         </div>
       </section>
 
       <footer>
-        <span>DROP / 07</span>
+        <span>DROP / 09</span>
         <span>NO SERVER STORAGE</span>
       </footer>
     </main>

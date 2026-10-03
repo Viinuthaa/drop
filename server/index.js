@@ -1,7 +1,10 @@
 const { WebSocketServer } = require("ws")
 const crypto = require("crypto")
 
-const server = new WebSocketServer({ port: 4000 })
+const server = new WebSocketServer({
+  port: process.env.PORT || 4000,
+})
+
 const rooms = new Map()
 
 function createCode() {
@@ -9,65 +12,100 @@ function createCode() {
 }
 
 function send(socket, message) {
-  socket.send(JSON.stringify(message))
+  if (socket.readyState === 1) {
+    socket.send(JSON.stringify(message))
+  }
+}
+
+function removeRoom(code) {
+  const room = rooms.get(code)
+
+  if (!room) return
+
+  for (const socket of room) {
+    socket.roomCode = null
+  }
+
+  rooms.delete(code)
 }
 
 server.on("connection", socket => {
+  socket.roomCode = null
+
   socket.on("message", raw => {
-    const message = JSON.parse(raw)
+    try {
+      const message = JSON.parse(raw)
 
-    if (message.type === "create") {
-      let code = createCode()
+      if (message.type === "create") {
+        let code = createCode()
 
-      while (rooms.has(code)) {
-        code = createCode()
-      }
+        while (rooms.has(code)) {
+          code = createCode()
+        }
 
-      rooms.set(code, new Set([socket]))
-      socket.roomCode = code
+        const room = new Set([socket])
 
-      send(socket, {
-        type: "room-created",
-        roomCode: code,
-      })
+        rooms.set(code, room)
+        socket.roomCode = code
 
-      return
-    }
+        send(socket, {
+          type: "room-created",
+          roomCode: code,
+        })
 
-    if (message.type === "join") {
-      const room = rooms.get(message.roomCode)
-
-      if (!room || room.size >= 2) {
-        send(socket, { type: "room-unavailable" })
         return
       }
 
-      room.add(socket)
-      socket.roomCode = message.roomCode
+      if (message.type === "join") {
+        const code = message.roomCode?.toUpperCase()
+        const room = rooms.get(code)
 
-      for (const peer of room) {
-        if (peer !== socket) {
-          send(peer, { type: "peer-joined" })
-        }
-      }
-
-      send(socket, { type: "room-joined" })
-      return
-    }
-
-    if (["offer", "answer", "ice-candidate"].includes(message.type)) {
-      const room = rooms.get(socket.roomCode)
-
-      if (!room) return
-
-      for (const peer of room) {
-        if (peer !== socket) {
-          send(peer, {
-            type: message.type,
-            data: message.data,
+        if (!room || room.size >= 2) {
+          send(socket, {
+            type: "room-unavailable",
           })
+
+          return
+        }
+
+        room.add(socket)
+        socket.roomCode = code
+
+        for (const peer of room) {
+          if (peer !== socket) {
+            send(peer, {
+              type: "peer-joined",
+            })
+          }
+        }
+
+        send(socket, {
+          type: "room-joined",
+        })
+
+        return
+      }
+
+      if (
+        ["offer", "answer", "ice-candidate"].includes(message.type)
+      ) {
+        const room = rooms.get(socket.roomCode)
+
+        if (!room) return
+
+        for (const peer of room) {
+          if (peer !== socket) {
+            send(peer, {
+              type: message.type,
+              data: message.data,
+            })
+          }
         }
       }
+    } catch {
+      send(socket, {
+        type: "server-error",
+      })
     }
   })
 
@@ -83,13 +121,17 @@ server.on("connection", socket => {
     room.delete(socket)
 
     for (const peer of room) {
-      send(peer, { type: "peer-left" })
+      send(peer, {
+        type: "peer-left",
+      })
     }
 
     if (room.size === 0) {
-      rooms.delete(code)
+      removeRoom(code)
     }
   })
 })
 
-console.log("Drop signaling server running on port 4000")
+console.log(
+  `Drop signaling server running on port ${process.env.PORT || 4000}`
+)
