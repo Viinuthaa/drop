@@ -12,6 +12,7 @@ type IncomingFile = {
   size: number
   type: string
   chunks: ArrayBuffer[]
+  received: number
 }
 
 type ReceivedFile = {
@@ -31,6 +32,9 @@ export default function FileDropzone({ dataChannel }: Props) {
   const [receivedFiles, setReceivedFiles] = useState<ReceivedFile[]>([])
   const [dragging, setDragging] = useState(false)
   const [sending, setSending] = useState(false)
+  const [progress, setProgress] = useState(0)
+  const [receiving, setReceiving] = useState(false)
+  const [receiveProgress, setReceiveProgress] = useState(0)
   const [message, setMessage] = useState("")
 
   useEffect(() => {
@@ -48,7 +52,12 @@ export default function FileDropzone({ dataChannel }: Props) {
               size: data.size,
               type: data.fileType || "application/octet-stream",
               chunks: [],
+              received: 0,
             }
+
+            setReceiving(true)
+            setReceiveProgress(0)
+            setMessage(`Receiving ${data.name}`)
           }
 
           if (data.type === "file-end") {
@@ -71,6 +80,9 @@ export default function FileDropzone({ dataChannel }: Props) {
               },
             ])
 
+            setReceiveProgress(100)
+            setReceiving(false)
+            setMessage(`${file.name} received`)
             incomingFile.current = null
           }
         } catch {
@@ -86,12 +98,30 @@ export default function FileDropzone({ dataChannel }: Props) {
 
       if (event.data instanceof ArrayBuffer) {
         file.chunks.push(event.data)
+        file.received += event.data.byteLength
+
+        setReceiveProgress(
+          Math.min(100, Math.round((file.received / file.size) * 100))
+        )
+
         return
       }
 
       if (event.data instanceof Blob) {
         event.data.arrayBuffer().then(buffer => {
-          incomingFile.current?.chunks.push(buffer)
+          const current = incomingFile.current
+
+          if (!current) return
+
+          current.chunks.push(buffer)
+          current.received += buffer.byteLength
+
+          setReceiveProgress(
+            Math.min(
+              100,
+              Math.round((current.received / current.size) * 100)
+            )
+          )
         })
       }
     }
@@ -176,6 +206,10 @@ export default function FileDropzone({ dataChannel }: Props) {
       dataChannel.send(chunk)
 
       offset += chunk.byteLength
+
+      setProgress(
+        Math.min(100, Math.round((offset / file.size) * 100))
+      )
     }
 
     dataChannel.send(
@@ -196,13 +230,17 @@ export default function FileDropzone({ dataChannel }: Props) {
     }
 
     setSending(true)
+    setProgress(0)
     setMessage("Sending files...")
 
     try {
       for (const file of files) {
+        setProgress(0)
+        setMessage(`Sending ${file.name}`)
         await sendFile(file)
       }
 
+      setProgress(100)
       setMessage("Files sent successfully")
     } catch {
       setMessage("File transfer failed")
@@ -282,9 +320,32 @@ export default function FileDropzone({ dataChannel }: Props) {
               dataChannel.readyState !== "open"
             }
           >
-            {sending ? "Sending..." : "Send files"}
+            {sending ? `Sending ${progress}%` : "Send files"}
             <span>→</span>
           </button>
+        </div>
+      )}
+
+      {(sending || receiving) && (
+        <div className="transfer-progress">
+          <div className="transfer-progress-header">
+            <span>
+              {sending ? "Sending" : "Receiving"}
+            </span>
+
+            <span>
+              {sending ? progress : receiveProgress}%
+            </span>
+          </div>
+
+          <div className="progress-track">
+            <div
+              className="progress-bar"
+              style={{
+                width: `${sending ? progress : receiveProgress}%`,
+              }}
+            />
+          </div>
         </div>
       )}
 

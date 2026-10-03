@@ -372,3 +372,28 @@ footer {
 .file-item button:hover {
   color: #9b6177;
 }
+.transfer-progress {
+  padding: 16px 20px;
+  border-top: 1px solid #332b36;
+}
+
+.transfer-progress-header {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 8px;
+  font-size: 13px;
+  color: #918995;
+}
+
+.progress-track {
+  width: 100%;
+  height: 4px;
+  background: #332b36;
+  overflow: hidden;
+}
+
+.progress-bar {
+  height: 100%;
+  background: #8c5268;
+  transition: width 0.15s ease;
+}
