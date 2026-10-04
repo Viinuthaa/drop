@@ -27,6 +27,7 @@ const MAX_BUFFERED_AMOUNT = 1024 * 1024
 export default function FileDropzone({ dataChannel }: Props) {
   const inputRef = useRef<HTMLInputElement>(null)
   const incomingFile = useRef<IncomingFile | null>(null)
+  const receivedUrls = useRef<string[]>([])
 
   const [files, setFiles] = useState<File[]>([])
   const [receivedFiles, setReceivedFiles] = useState<ReceivedFile[]>([])
@@ -50,7 +51,9 @@ export default function FileDropzone({ dataChannel }: Props) {
               id: data.id,
               name: data.name,
               size: data.size,
-              type: data.fileType || "application/octet-stream",
+              type:
+                data.fileType ||
+                "application/octet-stream",
               chunks: [],
               received: 0,
             }
@@ -70,6 +73,8 @@ export default function FileDropzone({ dataChannel }: Props) {
             })
 
             const url = URL.createObjectURL(blob)
+
+            receivedUrls.current.push(url)
 
             setReceivedFiles(current => [
               ...current,
@@ -101,7 +106,12 @@ export default function FileDropzone({ dataChannel }: Props) {
         file.received += event.data.byteLength
 
         setReceiveProgress(
-          Math.min(100, Math.round((file.received / file.size) * 100))
+          Math.min(
+            100,
+            Math.round(
+              (file.received / file.size) * 100
+            )
+          )
         )
 
         return
@@ -119,36 +129,51 @@ export default function FileDropzone({ dataChannel }: Props) {
           setReceiveProgress(
             Math.min(
               100,
-              Math.round((current.received / current.size) * 100)
+              Math.round(
+                (current.received / current.size) * 100
+              )
             )
           )
         })
       }
     }
 
-    dataChannel.addEventListener("message", handleMessage)
+    dataChannel.addEventListener(
+      "message",
+      handleMessage
+    )
 
     return () => {
-      dataChannel.removeEventListener("message", handleMessage)
+      dataChannel.removeEventListener(
+        "message",
+        handleMessage
+      )
     }
   }, [dataChannel])
 
   useEffect(() => {
     return () => {
-      receivedFiles.forEach(file => {
-        URL.revokeObjectURL(file.url)
-      })
+      receivedUrls.current.forEach(url =>
+        URL.revokeObjectURL(url)
+      )
     }
-  }, [receivedFiles])
+  }, [])
 
   function addFiles(selected: FileList | null) {
     if (!selected) return
 
-    setFiles(current => [...current, ...Array.from(selected)])
+    setFiles(current => [
+      ...current,
+      ...Array.from(selected),
+    ])
+
+    setMessage("")
   }
 
   function removeFile(index: number) {
-    setFiles(current => current.filter((_, i) => i !== index))
+    setFiles(current =>
+      current.filter((_, i) => i !== index)
+    )
   }
 
   function waitForBuffer() {
@@ -156,7 +181,10 @@ export default function FileDropzone({ dataChannel }: Props) {
       return Promise.resolve()
     }
 
-    if (dataChannel.bufferedAmount <= MAX_BUFFERED_AMOUNT) {
+    if (
+      dataChannel.bufferedAmount <=
+      MAX_BUFFERED_AMOUNT
+    ) {
       return Promise.resolve()
     }
 
@@ -166,10 +194,13 @@ export default function FileDropzone({ dataChannel }: Props) {
           "bufferedamountlow",
           handleLow
         )
+
         resolve()
       }
 
-      dataChannel.bufferedAmountLowThreshold = MAX_BUFFERED_AMOUNT
+      dataChannel.bufferedAmountLowThreshold =
+        MAX_BUFFERED_AMOUNT
+
       dataChannel.addEventListener(
         "bufferedamountlow",
         handleLow
@@ -178,8 +209,13 @@ export default function FileDropzone({ dataChannel }: Props) {
   }
 
   async function sendFile(file: File) {
-    if (!dataChannel || dataChannel.readyState !== "open") {
-      throw new Error("Data channel is not connected")
+    if (
+      !dataChannel ||
+      dataChannel.readyState !== "open"
+    ) {
+      throw new Error(
+        "Data channel is not connected"
+      )
     }
 
     const id = crypto.randomUUID()
@@ -208,7 +244,12 @@ export default function FileDropzone({ dataChannel }: Props) {
       offset += chunk.byteLength
 
       setProgress(
-        Math.min(100, Math.round((offset / file.size) * 100))
+        Math.min(
+          100,
+          Math.round(
+            (offset / file.size) * 100
+          )
+        )
       )
     }
 
@@ -231,7 +272,7 @@ export default function FileDropzone({ dataChannel }: Props) {
 
     setSending(true)
     setProgress(0)
-    setMessage("Sending files...")
+    setMessage("Preparing transfer...")
 
     try {
       for (const file of files) {
@@ -241,7 +282,12 @@ export default function FileDropzone({ dataChannel }: Props) {
       }
 
       setProgress(100)
-      setMessage("Files sent successfully")
+      setMessage(
+        files.length === 1
+          ? "File sent successfully"
+          : `${files.length} files sent successfully`
+      )
+      setFiles([])
     } catch {
       setMessage("File transfer failed")
     } finally {
@@ -257,10 +303,17 @@ export default function FileDropzone({ dataChannel }: Props) {
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
   }
 
+  const transferActive = sending || receiving
+  const currentProgress = sending
+    ? progress
+    : receiveProgress
+
   return (
     <div className="file-transfer">
       <div
-        className={`dropzone ${dragging ? "dragging" : ""}`}
+        className={`dropzone ${
+          dragging ? "dragging" : ""
+        }`}
         onDragOver={event => {
           event.preventDefault()
           setDragging(true)
@@ -271,14 +324,18 @@ export default function FileDropzone({ dataChannel }: Props) {
           setDragging(false)
           addFiles(event.dataTransfer.files)
         }}
-        onClick={() => inputRef.current?.click()}
+        onClick={() =>
+          inputRef.current?.click()
+        }
       >
         <input
           ref={inputRef}
           type="file"
           multiple
           hidden
-          onChange={event => addFiles(event.target.files)}
+          onChange={event =>
+            addFiles(event.target.files)
+          }
         />
 
         <span className="drop-icon">+</span>
@@ -291,7 +348,10 @@ export default function FileDropzone({ dataChannel }: Props) {
       {files.length > 0 && (
         <div className="file-list">
           {files.map((file, index) => (
-            <div className="file-item" key={`${file.name}-${index}`}>
+            <div
+              className="file-item"
+              key={`${file.name}-${index}`}
+            >
               <div>
                 <strong>{file.name}</strong>
                 <span>{formatSize(file.size)}</span>
@@ -302,6 +362,7 @@ export default function FileDropzone({ dataChannel }: Props) {
                   event.stopPropagation()
                   removeFile(index)
                 }}
+                disabled={sending}
               >
                 ×
               </button>
@@ -320,51 +381,76 @@ export default function FileDropzone({ dataChannel }: Props) {
               dataChannel.readyState !== "open"
             }
           >
-            {sending ? `Sending ${progress}%` : "Send files"}
+            {sending
+              ? `Sending ${progress}%`
+              : `Send ${
+                  files.length === 1
+                    ? "file"
+                    : `${files.length} files`
+                }`}
+
             <span>→</span>
           </button>
         </div>
       )}
 
-      {(sending || receiving) && (
+      {transferActive && (
         <div className="transfer-progress">
           <div className="transfer-progress-header">
             <span>
-              {sending ? "Sending" : "Receiving"}
+              {sending
+                ? "Sending"
+                : "Receiving"}
             </span>
 
-            <span>
-              {sending ? progress : receiveProgress}%
-            </span>
+            <span>{currentProgress}%</span>
           </div>
 
           <div className="progress-track">
             <div
               className="progress-bar"
               style={{
-                width: `${sending ? progress : receiveProgress}%`,
+                width: `${currentProgress}%`,
               }}
             />
           </div>
         </div>
       )}
 
-      {message && <p className="panel-note">{message}</p>}
+      {message && (
+        <p className="transfer-message">
+          {message}
+        </p>
+      )}
 
       {receivedFiles.length > 0 && (
-        <div className="file-list">
-          {receivedFiles.map((file, index) => (
-            <div className="file-item" key={`${file.name}-${index}`}>
-              <div>
-                <strong>{file.name}</strong>
-                <span>{formatSize(file.size)}</span>
-              </div>
+        <div className="received-section">
+          <p className="section-label">
+            RECEIVED FILES
+          </p>
 
-              <a href={file.url} download={file.name}>
-                Download
-              </a>
-            </div>
-          ))}
+          <div className="file-list">
+            {receivedFiles.map((file, index) => (
+              <div
+                className="file-item"
+                key={`${file.name}-${index}`}
+              >
+                <div>
+                  <strong>{file.name}</strong>
+                  <span>
+                    {formatSize(file.size)}
+                  </span>
+                </div>
+
+                <a
+                  href={file.url}
+                  download={file.name}
+                >
+                  Download
+                </a>
+              </div>
+            ))}
+          </div>
         </div>
       )}
     </div>

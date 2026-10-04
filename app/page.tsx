@@ -26,113 +26,135 @@ export default function Home() {
   const pendingCandidates = useRef<RTCIceCandidateInit[]>([])
 
   useEffect(() => {
-    connectSignaling()
+    let active = true
 
-    return () => {
-      socketRef.current?.close()
-      peerRef.current?.close()
-    }
-  }, [])
-
-  function connectSignaling() {
     const socket = new WebSocket(SIGNALING_URL)
     socketRef.current = socket
 
     socket.onopen = () => {
-      setStatus("")
+      if (!active) return
+
+      setDisconnected(false)
+
+      if (!status) {
+        setStatus("")
+      }
     }
 
     socket.onmessage = async event => {
-      try {
-        const message: SignalMessage = JSON.parse(event.data)
+      if (!active) return
 
-        if (message.type === "room-created") {
-          setRoomCode(message.roomCode || "")
-          setStatus("Waiting for the other device")
-          setDisconnected(false)
+      const message: SignalMessage =
+        JSON.parse(event.data)
+
+      if (message.type === "room-created") {
+        setRoomCode(message.roomCode || "")
+        setStatus("Waiting for the other device")
+        setDisconnected(false)
+      }
+
+      if (message.type === "room-joined") {
+        setRoomCode(message.roomCode || joinCode)
+        setStatus("Joining room")
+        setDisconnected(false)
+      }
+
+      if (message.type === "peer-joined") {
+        setStatus("Connecting to other device")
+        setDisconnected(false)
+        await createPeer(true)
+      }
+
+      if (message.type === "offer" && message.data) {
+        await createPeer(false)
+
+        const peer = peerRef.current
+
+        if (!peer) return
+
+        await peer.setRemoteDescription(
+          message.data
+        )
+
+        for (const candidate of pendingCandidates.current) {
+          await peer.addIceCandidate(candidate)
         }
 
-        if (message.type === "room-joined") {
-          setRoomCode(joinCode)
-          setStatus("Joining room")
-          setDisconnected(false)
-        }
+        pendingCandidates.current = []
 
-        if (message.type === "peer-joined") {
-          setStatus("Connecting to other device")
-          setDisconnected(false)
-          await createPeer(true)
-        }
+        const answer = await peer.createAnswer()
+        await peer.setLocalDescription(answer)
 
-        if (message.type === "offer" && message.data) {
-          await createPeer(false)
+        socket.send(
+          JSON.stringify({
+            type: "answer",
+            data: answer,
+          })
+        )
+      }
 
-          const peer = peerRef.current
+      if (message.type === "answer" && message.data) {
+        await peerRef.current?.setRemoteDescription(
+          message.data
+        )
+      }
 
-          if (!peer) return
+      if (
+        message.type === "ice-candidate" &&
+        message.data
+      ) {
+        const peer = peerRef.current
 
-          await peer.setRemoteDescription(message.data)
-
-          for (const candidate of pendingCandidates.current) {
-            await peer.addIceCandidate(candidate)
-          }
-
-          pendingCandidates.current = []
-
-          const answer = await peer.createAnswer()
-          await peer.setLocalDescription(answer)
-
-          socket.send(
-            JSON.stringify({
-              type: "answer",
-              data: answer,
-            })
+        if (peer?.remoteDescription) {
+          await peer.addIceCandidate(message.data)
+        } else {
+          pendingCandidates.current.push(
+            message.data as RTCIceCandidateInit
           )
         }
+      }
 
-        if (message.type === "answer" && message.data) {
-          await peerRef.current?.setRemoteDescription(message.data)
-        }
+      if (message.type === "peer-left") {
+        handleDisconnect(
+          "Other device disconnected"
+        )
+      }
 
-        if (message.type === "ice-candidate" && message.data) {
-          const peer = peerRef.current
+      if (message.type === "room-unavailable") {
+        setStatus("Room unavailable")
+        setDisconnected(true)
+      }
 
-          if (peer?.remoteDescription) {
-            await peer.addIceCandidate(message.data)
-          } else {
-            pendingCandidates.current.push(
-              message.data as RTCIceCandidateInit
-            )
-          }
-        }
-
-        if (message.type === "peer-left") {
-          handleDisconnect("Other device disconnected")
-        }
-
-        if (message.type === "room-unavailable") {
-          setStatus("Room unavailable")
-          setDisconnected(true)
-        }
-
-        if (message.type === "server-error") {
-          setStatus("Signaling server error")
-        }
-      } catch {
-        setStatus("Invalid signaling message")
+      if (message.type === "server-error") {
+        setStatus("Server error")
+        setDisconnected(true)
       }
     }
 
     socket.onerror = () => {
+      if (!active) return
+      if (socketRef.current !== socket) return
+
       setStatus("Signaling server unavailable")
+      setDisconnected(true)
     }
 
     socket.onclose = () => {
-      if (!disconnected && !peerRef.current) {
-        setStatus("Signaling server unavailable")
-      }
+      if (!active) return
+      if (socketRef.current !== socket) return
     }
-  }
+
+    return () => {
+      active = false
+
+      if (socketRef.current === socket) {
+        socketRef.current = null
+      }
+
+      socket.close()
+      peerRef.current?.close()
+    }
+  }, [])
 
   async function createPeer(offerer: boolean) {
     if (peerRef.current) return
@@ -164,33 +186,44 @@ export default function Home() {
         setDisconnected(false)
       }
 
-      if (peer.connectionState === "failed") {
-        handleDisconnect("Connection failed")
-      }
-
-      if (peer.connectionState === "disconnected") {
-        setStatus("Connection interrupted")
-      }
-
-      if (peer.connectionState === "closed") {
-        setDataChannel(null)
-      }
-    }
-
-    peer.oniceconnectionstatechange = () => {
-      if (peer.iceConnectionState === "failed") {
-        handleDisconnect("Network connection failed")
+      if (
+        peer.connectionState === "failed" ||
+        peer.connectionState === "disconnected" ||
+        peer.connectionState === "closed"
+      ) {
+        handleDisconnect(
+          "Connection interrupted"
+        )
       }
     }
 
     peer.ondatachannel = event => {
-      setupDataChannel(event.channel)
+      const channel = event.channel
+
+      channel.onopen = () => {
+        setDataChannel(channel)
+        setStatus("Connected directly")
+        setDisconnected(false)
+      }
+
+      channel.onclose = () => {
+        setDataChannel(null)
+      }
     }
 
     if (offerer) {
-      const channel = peer.createDataChannel("files")
+      const channel =
+        peer.createDataChannel("files")
 
-      setupDataChannel(channel)
+      channel.onopen = () => {
+        setDataChannel(channel)
+        setStatus("Connected directly")
+        setDisconnected(false)
+      }
+
+      channel.onclose = () => {
+        setDataChannel(null)
+      }
 
       const offer = await peer.createOffer()
       await peer.setLocalDescription(offer)
@@ -201,22 +234,6 @@ export default function Home() {
           data: offer,
         })
       )
-    }
-  }
-
-  function setupDataChannel(channel: RTCDataChannel) {
-    channel.onopen = () => {
-      setDataChannel(channel)
-      setStatus("Connected directly")
-      setDisconnected(false)
-    }
-
-    channel.onclose = () => {
-      setDataChannel(null)
-    }
-
-    channel.onerror = () => {
-      setStatus("File transfer connection failed")
     }
   }
 
@@ -231,17 +248,19 @@ export default function Home() {
   }
 
   function createRoom() {
-    const socket = socketRef.current
-
-    if (!socket || socket.readyState !== WebSocket.OPEN) {
+    if (
+      socketRef.current?.readyState !==
+      WebSocket.OPEN
+    ) {
       setStatus("Signaling server unavailable")
       return
     }
 
     setRoomCode("")
     setDisconnected(false)
+    setStatus("Creating room...")
 
-    socket.send(
+    socketRef.current.send(
       JSON.stringify({
         type: "create",
       })
@@ -249,19 +268,18 @@ export default function Home() {
   }
 
   function joinRoom() {
-    const socket = socketRef.current
-
     if (
       joinCode.length !== 6 ||
-      !socket ||
-      socket.readyState !== WebSocket.OPEN
+      socketRef.current?.readyState !==
+        WebSocket.OPEN
     ) {
       return
     }
 
     setDisconnected(false)
+    setStatus("Joining room...")
 
-    socket.send(
+    socketRef.current.send(
       JSON.stringify({
         type: "join",
         roomCode: joinCode,
@@ -269,14 +287,24 @@ export default function Home() {
     )
   }
 
-  const connected = status === "Connected directly"
+  const connected =
+    status === "Connected directly"
+
+  const qrValue =
+    typeof window !== "undefined"
+      ? `${window.location.origin}/?room=${roomCode}`
+      : roomCode
 
   return (
     <main className="page">
       <nav className="navbar">
         <div className="status">
-          <span />
-          P2P transfer
+          <span
+            className={connected ? "online" : ""}
+          />
+          {connected
+            ? "Connected"
+            : "P2P transfer"}
         </div>
 
         <span>WEBRTC</span>
@@ -285,27 +313,40 @@ export default function Home() {
       <section className="hero">
         <div className="brand">drop</div>
 
-        <p className="eyebrow">PRIVATE FILE TRANSFER</p>
+        <p className="eyebrow">
+          PRIVATE FILE TRANSFER
+        </p>
 
         <h1>Send files directly</h1>
 
         <p className="hero-text">
-          Fast, private file transfers between devices.
-          Nothing is uploaded or stored on a server.
+          Fast, private file transfers between
+          devices. Nothing is uploaded or stored
+          on a server.
         </p>
 
         <div className="panel">
           <div className="tabs">
             <button
-              className={mode === "create" ? "active" : ""}
-              onClick={() => setMode("create")}
+              className={
+                mode === "create" ? "active" : ""
+              }
+              onClick={() => {
+                setMode("create")
+                setDisconnected(false)
+              }}
             >
               Create room
             </button>
 
             <button
-              className={mode === "join" ? "active" : ""}
-              onClick={() => setMode("join")}
+              className={
+                mode === "join" ? "active" : ""
+              }
+              onClick={() => {
+                setMode("join")
+                setDisconnected(false)
+              }}
             >
               Join room
             </button>
@@ -314,22 +355,42 @@ export default function Home() {
           {mode === "create" ? (
             roomCode && !disconnected ? (
               <div className="room-created">
-                <p className="room-label">ROOM CODE</p>
+                <p className="room-label">
+                  ROOM CODE
+                </p>
+
                 <strong>{roomCode}</strong>
-                <p>{status}</p>
 
                 <div className="qr-code">
                   <QRCodeSVG
-                    value={`${window.location.origin}/?room=${roomCode}`}
+                    value={qrValue}
                     size={160}
                     bgColor="#1a171f"
                     fgColor="#e5e0e5"
                   />
                 </div>
+
+                <div className="connection-state">
+                  <span
+                    className={
+                      connected
+                        ? "connection-dot connected"
+                        : "connection-dot"
+                    }
+                  />
+
+                  <span>{status}</span>
+                </div>
               </div>
             ) : (
-              <button className="primary-button" onClick={createRoom}>
-                Create a room
+              <button
+                className="primary-button"
+                onClick={createRoom}
+              >
+                {status === "Creating room..."
+                  ? "Creating room..."
+                  : "Create a room"}
+
                 <span>→</span>
               </button>
             )
@@ -338,7 +399,9 @@ export default function Home() {
               <input
                 value={joinCode}
                 onChange={event =>
-                  setJoinCode(event.target.value.toUpperCase())
+                  setJoinCode(
+                    event.target.value.toUpperCase()
+                  )
                 }
                 maxLength={6}
                 placeholder="Room code"
@@ -349,38 +412,51 @@ export default function Home() {
                 onClick={joinRoom}
                 disabled={joinCode.length !== 6}
               >
-                Join room
+                {status === "Joining room..."
+                  ? "Joining..."
+                  : "Join room"}
+
                 <span>→</span>
               </button>
             </div>
           )}
 
-          {connected && <FileDropzone dataChannel={dataChannel} />}
+          {connected && (
+            <FileDropzone
+              dataChannel={dataChannel}
+            />
+          )}
 
           {disconnected && (
-            <div className="room-created">
-              <p className="room-label">DISCONNECTED</p>
+            <div className="disconnect-state">
+              <p className="room-label">
+                CONNECTION ENDED
+              </p>
+
               <p>{status}</p>
 
-              <button
-                className="primary-button"
-                onClick={createRoom}
-              >
-                Create new room
-                <span>→</span>
-              </button>
+              {mode === "create" && (
+                <button
+                  className="primary-button"
+                  onClick={createRoom}
+                >
+                  Create new room
+                  <span>→</span>
+                </button>
+              )}
             </div>
           )}
 
           <p className="panel-note">
-            {status ||
-              "No account required · Browser-to-browser transfer"}
+            {connected
+              ? "Direct browser-to-browser connection · Files stay between devices"
+              : "No account required · Browser-to-browser transfer"}
           </p>
         </div>
       </section>
 
       <footer>
-        <span>DROP / 12</span>
+        <span>DROP / 13</span>
         <span>NO SERVER STORAGE</span>
       </footer>
     </main>
