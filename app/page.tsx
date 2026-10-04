@@ -4,7 +4,9 @@ import { useEffect, useRef, useState } from "react"
 import { QRCodeSVG } from "qrcode.react"
 import FileDropzone from "../components/FileDropzone"
 
-const SIGNALING_URL = "ws://localhost:4000"
+const SIGNALING_URL =
+  process.env.NEXT_PUBLIC_SIGNALING_URL ||
+  "ws://localhost:4000"
 
 type SignalMessage = {
   type: string
@@ -25,7 +27,8 @@ export default function Home() {
   const [copied, setCopied] = useState("")
 
   const socketRef = useRef<WebSocket | null>(null)
-  const peerRef = useRef<RTCPeerConnection | null>(null)
+  const peerRef =
+    useRef<RTCPeerConnection | null>(null)
   const pendingCandidates =
     useRef<RTCIceCandidateInit[]>([])
 
@@ -65,7 +68,9 @@ export default function Home() {
 
       if (message.type === "room-created") {
         setRoomCode(message.roomCode || "")
-        setStatus("Waiting for the other device")
+        setStatus(
+          "Waiting for the other device"
+        )
         setDisconnected(false)
       }
 
@@ -96,7 +101,7 @@ export default function Home() {
         if (!peer) return
 
         await peer.setRemoteDescription(
-          message.data
+          message.data as RTCSessionDescriptionInit
         )
 
         for (const candidate of
@@ -126,7 +131,7 @@ export default function Home() {
         message.data
       ) {
         await peerRef.current?.setRemoteDescription(
-          message.data
+          message.data as RTCSessionDescriptionInit
         )
       }
 
@@ -138,7 +143,7 @@ export default function Home() {
 
         if (peer?.remoteDescription) {
           await peer.addIceCandidate(
-            message.data
+            message.data as RTCIceCandidateInit
           )
         } else {
           pendingCandidates.current.push(
@@ -576,7 +581,7 @@ export default function Home() {
       </section>
 
       <footer>
-        <span>DROP / 16</span>
+        <span>DROP / 17</span>
         <span>NO SERVER STORAGE</span>
       </footer>
     </main>
