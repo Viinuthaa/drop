@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect, useRef, useState } from "react"
+import { QRCodeSVG } from "qrcode.react"
 import FileDropzone from "../components/FileDropzone"
 
 const SIGNALING_URL = "ws://localhost:4000"
@@ -237,7 +238,23 @@ export default function Home() {
     )
   }
 
+  function handleQrScan(value: string) {
+    const code = value.toUpperCase().trim()
+
+    if (code.length !== 6) return
+
+    setMode("join")
+    setJoinCode(code)
+    setRoomCode("")
+    setDisconnected(false)
+  }
+
   const connected = status === "Connected directly"
+
+  const qrValue =
+    typeof window !== "undefined"
+      ? `${window.location.origin}/?room=${roomCode}`
+      : roomCode
 
   return (
     <main className="page">
@@ -284,6 +301,16 @@ export default function Home() {
               <div className="room-created">
                 <p className="room-label">ROOM CODE</p>
                 <strong>{roomCode}</strong>
+
+                <div className="qr-code">
+                  <QRCodeSVG
+                    value={qrValue}
+                    size={160}
+                    bgColor="#1a171f"
+                    fgColor="#e5e0e5"
+                  />
+                </div>
+
                 <p>{status}</p>
               </div>
             ) : (
@@ -341,7 +368,7 @@ export default function Home() {
       </section>
 
       <footer>
-        <span>DROP / 09</span>
+        <span>DROP / 11</span>
         <span>NO SERVER STORAGE</span>
       </footer>
     </main>

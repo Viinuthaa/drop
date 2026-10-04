@@ -397,3 +397,11 @@ footer {
   background: #8c5268;
   transition: width 0.15s ease;
 }
+.qr-code {
+  display: flex;
+  justify-content: center;
+  margin: 20px 0;
+  padding: 14px;
+  background: #1a171f;
+  border: 1px solid #332b36;
+}
