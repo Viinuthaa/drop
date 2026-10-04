@@ -26,83 +26,100 @@ export default function Home() {
   const pendingCandidates = useRef<RTCIceCandidateInit[]>([])
 
   useEffect(() => {
+    connectSignaling()
+
+    return () => {
+      socketRef.current?.close()
+      peerRef.current?.close()
+    }
+  }, [])
+
+  function connectSignaling() {
     const socket = new WebSocket(SIGNALING_URL)
     socketRef.current = socket
 
+    socket.onopen = () => {
+      setStatus("")
+    }
+
     socket.onmessage = async event => {
-      const message: SignalMessage = JSON.parse(event.data)
+      try {
+        const message: SignalMessage = JSON.parse(event.data)
 
-      if (message.type === "room-created") {
-        setRoomCode(message.roomCode || "")
-        setStatus("Waiting for the other device")
-        setDisconnected(false)
-      }
-
-      if (message.type === "room-joined") {
-        setRoomCode(joinCode)
-        setStatus("Joining room")
-        setDisconnected(false)
-      }
-
-      if (message.type === "peer-joined") {
-        setStatus("Connecting to other device")
-        setDisconnected(false)
-        await createPeer(true)
-      }
-
-      if (message.type === "offer" && message.data) {
-        await createPeer(false)
-
-        const peer = peerRef.current
-
-        if (!peer) return
-
-        await peer.setRemoteDescription(message.data)
-
-        for (const candidate of pendingCandidates.current) {
-          await peer.addIceCandidate(candidate)
+        if (message.type === "room-created") {
+          setRoomCode(message.roomCode || "")
+          setStatus("Waiting for the other device")
+          setDisconnected(false)
         }
 
-        pendingCandidates.current = []
+        if (message.type === "room-joined") {
+          setRoomCode(joinCode)
+          setStatus("Joining room")
+          setDisconnected(false)
+        }
 
-        const answer = await peer.createAnswer()
-        await peer.setLocalDescription(answer)
+        if (message.type === "peer-joined") {
+          setStatus("Connecting to other device")
+          setDisconnected(false)
+          await createPeer(true)
+        }
 
-        socket.send(
-          JSON.stringify({
-            type: "answer",
-            data: answer,
-          })
-        )
-      }
+        if (message.type === "offer" && message.data) {
+          await createPeer(false)
 
-      if (message.type === "answer" && message.data) {
-        await peerRef.current?.setRemoteDescription(message.data)
-      }
+          const peer = peerRef.current
 
-      if (message.type === "ice-candidate" && message.data) {
-        const peer = peerRef.current
+          if (!peer) return
 
-        if (peer?.remoteDescription) {
-          await peer.addIceCandidate(message.data)
-        } else {
-          pendingCandidates.current.push(
-            message.data as RTCIceCandidateInit
+          await peer.setRemoteDescription(message.data)
+
+          for (const candidate of pendingCandidates.current) {
+            await peer.addIceCandidate(candidate)
+          }
+
+          pendingCandidates.current = []
+
+          const answer = await peer.createAnswer()
+          await peer.setLocalDescription(answer)
+
+          socket.send(
+            JSON.stringify({
+              type: "answer",
+              data: answer,
+            })
           )
         }
-      }
 
-      if (message.type === "peer-left") {
-        handleDisconnect("Other device disconnected")
-      }
+        if (message.type === "answer" && message.data) {
+          await peerRef.current?.setRemoteDescription(message.data)
+        }
 
-      if (message.type === "room-unavailable") {
-        setStatus("Room unavailable")
-        setDisconnected(true)
-      }
+        if (message.type === "ice-candidate" && message.data) {
+          const peer = peerRef.current
 
-      if (message.type === "server-error") {
-        setStatus("Server error")
+          if (peer?.remoteDescription) {
+            await peer.addIceCandidate(message.data)
+          } else {
+            pendingCandidates.current.push(
+              message.data as RTCIceCandidateInit
+            )
+          }
+        }
+
+        if (message.type === "peer-left") {
+          handleDisconnect("Other device disconnected")
+        }
+
+        if (message.type === "room-unavailable") {
+          setStatus("Room unavailable")
+          setDisconnected(true)
+        }
+
+        if (message.type === "server-error") {
+          setStatus("Signaling server error")
+        }
+      } catch {
+        setStatus("Invalid signaling message")
       }
     }
 
@@ -110,11 +127,12 @@ export default function Home() {
       setStatus("Signaling server unavailable")
     }
 
-    return () => {
-      socket.close()
-      peerRef.current?.close()
+    socket.onclose = () => {
+      if (!disconnected && !peerRef.current) {
+        setStatus("Signaling server unavailable")
+      }
     }
-  }, [joinCode])
+  }
 
   async function createPeer(offerer: boolean) {
     if (peerRef.current) return
@@ -146,41 +164,33 @@ export default function Home() {
         setDisconnected(false)
       }
 
-      if (
-        peer.connectionState === "failed" ||
-        peer.connectionState === "disconnected" ||
-        peer.connectionState === "closed"
-      ) {
-        handleDisconnect("Connection interrupted")
+      if (peer.connectionState === "failed") {
+        handleDisconnect("Connection failed")
+      }
+
+      if (peer.connectionState === "disconnected") {
+        setStatus("Connection interrupted")
+      }
+
+      if (peer.connectionState === "closed") {
+        setDataChannel(null)
+      }
+    }
+
+    peer.oniceconnectionstatechange = () => {
+      if (peer.iceConnectionState === "failed") {
+        handleDisconnect("Network connection failed")
       }
     }
 
     peer.ondatachannel = event => {
-      const channel = event.channel
-
-      channel.onopen = () => {
-        setDataChannel(channel)
-        setStatus("Connected directly")
-        setDisconnected(false)
-      }
-
-      channel.onclose = () => {
-        setDataChannel(null)
-      }
+      setupDataChannel(event.channel)
     }
 
     if (offerer) {
       const channel = peer.createDataChannel("files")
 
-      channel.onopen = () => {
-        setDataChannel(channel)
-        setStatus("Connected directly")
-        setDisconnected(false)
-      }
-
-      channel.onclose = () => {
-        setDataChannel(null)
-      }
+      setupDataChannel(channel)
 
       const offer = await peer.createOffer()
       await peer.setLocalDescription(offer)
@@ -191,6 +201,22 @@ export default function Home() {
           data: offer,
         })
       )
+    }
+  }
+
+  function setupDataChannel(channel: RTCDataChannel) {
+    channel.onopen = () => {
+      setDataChannel(channel)
+      setStatus("Connected directly")
+      setDisconnected(false)
+    }
+
+    channel.onclose = () => {
+      setDataChannel(null)
+    }
+
+    channel.onerror = () => {
+      setStatus("File transfer connection failed")
     }
   }
 
@@ -205,7 +231,9 @@ export default function Home() {
   }
 
   function createRoom() {
-    if (socketRef.current?.readyState !== WebSocket.OPEN) {
+    const socket = socketRef.current
+
+    if (!socket || socket.readyState !== WebSocket.OPEN) {
       setStatus("Signaling server unavailable")
       return
     }
@@ -213,7 +241,7 @@ export default function Home() {
     setRoomCode("")
     setDisconnected(false)
 
-    socketRef.current.send(
+    socket.send(
       JSON.stringify({
         type: "create",
       })
@@ -221,16 +249,19 @@ export default function Home() {
   }
 
   function joinRoom() {
+    const socket = socketRef.current
+
     if (
       joinCode.length !== 6 ||
-      socketRef.current?.readyState !== WebSocket.OPEN
+      !socket ||
+      socket.readyState !== WebSocket.OPEN
     ) {
       return
     }
 
     setDisconnected(false)
 
-    socketRef.current.send(
+    socket.send(
       JSON.stringify({
         type: "join",
         roomCode: joinCode,
@@ -238,23 +269,7 @@ export default function Home() {
     )
   }
 
-  function handleQrScan(value: string) {
-    const code = value.toUpperCase().trim()
-
-    if (code.length !== 6) return
-
-    setMode("join")
-    setJoinCode(code)
-    setRoomCode("")
-    setDisconnected(false)
-  }
-
   const connected = status === "Connected directly"
-
-  const qrValue =
-    typeof window !== "undefined"
-      ? `${window.location.origin}/?room=${roomCode}`
-      : roomCode
 
   return (
     <main className="page">
@@ -301,17 +316,16 @@ export default function Home() {
               <div className="room-created">
                 <p className="room-label">ROOM CODE</p>
                 <strong>{roomCode}</strong>
+                <p>{status}</p>
 
                 <div className="qr-code">
                   <QRCodeSVG
-                    value={qrValue}
+                    value={`${window.location.origin}/?room=${roomCode}`}
                     size={160}
                     bgColor="#1a171f"
                     fgColor="#e5e0e5"
                   />
                 </div>
-
-                <p>{status}</p>
               </div>
             ) : (
               <button className="primary-button" onClick={createRoom}>
@@ -348,15 +362,13 @@ export default function Home() {
               <p className="room-label">DISCONNECTED</p>
               <p>{status}</p>
 
-              {mode === "create" && (
-                <button
-                  className="primary-button"
-                  onClick={createRoom}
-                >
-                  Create new room
-                  <span>→</span>
-                </button>
-              )}
+              <button
+                className="primary-button"
+                onClick={createRoom}
+              >
+                Create new room
+                <span>→</span>
+              </button>
             </div>
           )}
 
@@ -368,7 +380,7 @@ export default function Home() {
       </section>
 
       <footer>
-        <span>DROP / 11</span>
+        <span>DROP / 12</span>
         <span>NO SERVER STORAGE</span>
       </footer>
     </main>
