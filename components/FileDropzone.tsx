@@ -24,22 +24,37 @@ type ReceivedFile = {
 const CHUNK_SIZE = 64 * 1024
 const MAX_BUFFERED_AMOUNT = 1024 * 1024
 
-export default function FileDropzone({ dataChannel }: Props) {
+export default function FileDropzone({
+  dataChannel,
+}: Props) {
   const inputRef = useRef<HTMLInputElement>(null)
   const incomingFile = useRef<IncomingFile | null>(null)
   const receivedUrls = useRef<string[]>([])
+  const transferActive = useRef(false)
 
   const [files, setFiles] = useState<File[]>([])
-  const [receivedFiles, setReceivedFiles] = useState<ReceivedFile[]>([])
+  const [receivedFiles, setReceivedFiles] =
+    useState<ReceivedFile[]>([])
   const [dragging, setDragging] = useState(false)
   const [sending, setSending] = useState(false)
   const [progress, setProgress] = useState(0)
   const [receiving, setReceiving] = useState(false)
-  const [receiveProgress, setReceiveProgress] = useState(0)
+  const [receiveProgress, setReceiveProgress] =
+    useState(0)
   const [message, setMessage] = useState("")
 
   useEffect(() => {
     if (!dataChannel) return
+
+    function handleClose() {
+      transferActive.current = false
+      incomingFile.current = null
+      setSending(false)
+      setReceiving(false)
+      setProgress(0)
+      setReceiveProgress(0)
+      setMessage("Connection lost during transfer")
+    }
 
     function handleMessage(event: MessageEvent) {
       if (typeof event.data === "string") {
@@ -66,7 +81,17 @@ export default function FileDropzone({ dataChannel }: Props) {
           if (data.type === "file-end") {
             const file = incomingFile.current
 
-            if (!file || file.id !== data.id) return
+            if (!file || file.id !== data.id) {
+              return
+            }
+
+            if (file.received !== file.size) {
+              incomingFile.current = null
+              setReceiving(false)
+              setReceiveProgress(0)
+              setMessage("Incomplete file received")
+              return
+            }
 
             const blob = new Blob(file.chunks, {
               type: file.type,
@@ -143,10 +168,20 @@ export default function FileDropzone({ dataChannel }: Props) {
       handleMessage
     )
 
+    dataChannel.addEventListener(
+      "close",
+      handleClose
+    )
+
     return () => {
       dataChannel.removeEventListener(
         "message",
         handleMessage
+      )
+
+      dataChannel.removeEventListener(
+        "close",
+        handleClose
       )
     }
   }, [dataChannel])
@@ -188,14 +223,29 @@ export default function FileDropzone({ dataChannel }: Props) {
       return Promise.resolve()
     }
 
-    return new Promise<void>(resolve => {
+    return new Promise<void>((resolve, reject) => {
       const handleLow = () => {
+        cleanup()
+        resolve()
+      }
+
+      const handleClose = () => {
+        cleanup()
+        reject(
+          new Error("Connection closed")
+        )
+      }
+
+      const cleanup = () => {
         dataChannel.removeEventListener(
           "bufferedamountlow",
           handleLow
         )
 
-        resolve()
+        dataChannel.removeEventListener(
+          "close",
+          handleClose
+        )
       }
 
       dataChannel.bufferedAmountLowThreshold =
@@ -204,6 +254,11 @@ export default function FileDropzone({ dataChannel }: Props) {
       dataChannel.addEventListener(
         "bufferedamountlow",
         handleLow
+      )
+
+      dataChannel.addEventListener(
+        "close",
+        handleClose
       )
     })
   }
@@ -233,7 +288,22 @@ export default function FileDropzone({ dataChannel }: Props) {
     let offset = 0
 
     while (offset < file.size) {
+      if (
+        !dataChannel ||
+        dataChannel.readyState !== "open" ||
+        !transferActive.current
+      ) {
+        throw new Error("Connection closed")
+      }
+
       await waitForBuffer()
+
+      if (
+        dataChannel.readyState !== "open" ||
+        !transferActive.current
+      ) {
+        throw new Error("Connection closed")
+      }
 
       const chunk = await file
         .slice(offset, offset + CHUNK_SIZE)
@@ -253,6 +323,10 @@ export default function FileDropzone({ dataChannel }: Props) {
       )
     }
 
+    if (dataChannel.readyState !== "open") {
+      throw new Error("Connection closed")
+    }
+
     dataChannel.send(
       JSON.stringify({
         type: "file-end",
@@ -270,6 +344,7 @@ export default function FileDropzone({ dataChannel }: Props) {
       return
     }
 
+    transferActive.current = true
     setSending(true)
     setProgress(0)
     setMessage("Preparing transfer...")
@@ -287,10 +362,15 @@ export default function FileDropzone({ dataChannel }: Props) {
           ? "File sent successfully"
           : `${files.length} files sent successfully`
       )
+
       setFiles([])
     } catch {
-      setMessage("File transfer failed")
+      setProgress(0)
+      setMessage(
+        "Transfer failed — connection was lost"
+      )
     } finally {
+      transferActive.current = false
       setSending(false)
     }
   }
@@ -303,10 +383,8 @@ export default function FileDropzone({ dataChannel }: Props) {
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
   }
 
-  const transferActive = sending || receiving
-  const currentProgress = sending
-    ? progress
-    : receiveProgress
+  const isConnected =
+    dataChannel?.readyState === "open"
 
   return (
     <div className="file-transfer">
@@ -354,7 +432,9 @@ export default function FileDropzone({ dataChannel }: Props) {
             >
               <div>
                 <strong>{file.name}</strong>
-                <span>{formatSize(file.size)}</span>
+                <span>
+                  {formatSize(file.size)}
+                </span>
               </div>
 
               <button
@@ -376,9 +456,7 @@ export default function FileDropzone({ dataChannel }: Props) {
               sendFiles()
             }}
             disabled={
-              sending ||
-              !dataChannel ||
-              dataChannel.readyState !== "open"
+              sending || !isConnected
             }
           >
             {sending
@@ -394,7 +472,7 @@ export default function FileDropzone({ dataChannel }: Props) {
         </div>
       )}
 
-      {transferActive && (
+      {(sending || receiving) && (
         <div className="transfer-progress">
           <div className="transfer-progress-header">
             <span>
@@ -403,14 +481,23 @@ export default function FileDropzone({ dataChannel }: Props) {
                 : "Receiving"}
             </span>
 
-            <span>{currentProgress}%</span>
+            <span>
+              {sending
+                ? progress
+                : receiveProgress}
+              %
+            </span>
           </div>
 
           <div className="progress-track">
             <div
               className="progress-bar"
               style={{
-                width: `${currentProgress}%`,
+                width: `${
+                  sending
+                    ? progress
+                    : receiveProgress
+                }%`,
               }}
             />
           </div>
