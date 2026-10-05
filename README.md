@@ -1,36 +1,43 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Drop
 
-## Getting Started
+A peer-to-peer file transfer application that lets users send files directly between devices using WebRTC. Files are transferred browser-to-browser without being uploaded or stored on the backend.
 
-First, run the development server:
+![Drop Preview](./public/screenshot.png)
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
-```
+##  Live Demo
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+**[Try Drop →](https://drop-viinuthaa.vercel.app/)**
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+##  Features
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+-  No sign-up or login required
+-  Peer-to-peer file transfer using WebRTC DataChannels
+-  Create and join rooms using a short room code
+-  QR code and share-link based room joining
+-  Multi-file transfers with real-time progress tracking
+-  64 KB chunked file transfers with DataChannel backpressure handling
+-  WebSocket-based signaling
+-  Redis-backed room state with automatic expiration
+-  Responsive drag-and-drop interface
+-  Supports file transfer between different devices
+-  File contents are transferred directly between browsers without passing through the backend
 
-## Learn More
+##  Tech Stack
 
-To learn more about Next.js, take a look at the following resources:
+- **Frontend:** Next.js, React, TypeScript, Tailwind CSS
+- **Real-time Communication:** WebRTC DataChannels, WebSocket
+- **Backend:** Node.js
+- **Database / State:** Upstash Redis
+- **QR Sharing:** QRCode
+- **Deployment:** Vercel, Render, Upstash
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+##  How It Works
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+1. Create a room and receive a unique room code.
+2. Share the room code, link, or QR code with another device.
+3. The second device joins the room.
+4. WebSocket signaling exchanges the information required to establish the WebRTC connection.
+5. A direct WebRTC DataChannel is created between the two browsers.
+6. Files are divided into 64 KB chunks and transferred directly between the devices.
+7. Backpressure handling prevents the DataChannel buffer from becoming overloaded.
+8. The receiving device reconstructs the file and provides it for download.
